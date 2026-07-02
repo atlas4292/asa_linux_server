@@ -33,7 +33,7 @@ AUTO_UPDATE="${AUTO_UPDATE:-true}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-STEAMCMD="/opt/steamcmd/steamcmd.sh"
+STEAMCMD="/usr/games/steamcmd"   # Installed via Ubuntu multiverse apt package
 SERVER_DIR="/ark/server"
 PROTON_PREFIX="/ark/proton-prefix"
 PROTON="${PROTON_HOME}/proton"

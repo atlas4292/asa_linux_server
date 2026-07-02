@@ -23,7 +23,7 @@ ASA_APP_ID="2430930"
 info "Starting SteamCMD update for ASA Dedicated Server (AppID ${ASA_APP_ID})..."
 info "Server directory: ${SERVER_DIR}"
 
-/opt/steamcmd/steamcmd.sh \
+/usr/games/steamcmd \
     +@sSteamCmdForcePlatformType windows \
     +@sSteamCmdForcePlatformBitness 64 \
     +login anonymous \

@@ -11,11 +11,21 @@ ARG DEBIAN_FRONTEND=noninteractive
 LABEL org.opencontainers.image.title="ASA Dedicated Server (Linux/Proton)"
 LABEL org.opencontainers.image.description="ARK: Survival Ascended dedicated server running headlessly via Proton-GE on Linux"
 
-# ── 32-bit architecture (SteamCMD + Wine 32-bit stubs) ───────────────────────
-RUN dpkg --add-architecture i386
+# ── 32-bit architecture + multiverse repository ──────────────────────────────
+# SteamCMD lives in Ubuntu's multiverse repository — distro-maintained,
+# GPG-signed, and the method the official SteamCMD docs recommend.
+RUN dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository multiverse && \
+    apt-get update
 
-# ── System dependencies ───────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# ── System dependencies + SteamCMD ───────────────────────────────────────────
+# Pre-accept the Steam EULA so the steamcmd package installs non-interactively.
+RUN echo "steam steam/question select I AGREE" | debconf-set-selections && \
+    echo "steam steam/license note ''" | debconf-set-selections
+
+RUN apt-get install -y --no-install-recommends \
         # TLS / download tools
         ca-certificates \
         curl \
@@ -23,9 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Archive utilities
         tar \
         xz-utils \
-        # 32/64-bit C runtime (SteamCMD requirement)
+        # 32/64-bit C runtime (Wine 32-bit stubs)
         lib32gcc-s1 \
         lib32stdc++6 \
+        # SteamCMD — official Ubuntu multiverse package (binary: /usr/games/steamcmd)
+        steamcmd \
         # Audio stubs — prevents Wine crashing on no-sound hosts
         libasound2 \
         libasound2:i386 \
@@ -45,12 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Utilities
         procps \
     && rm -rf /var/lib/apt/lists/*
-
-# ── SteamCMD ──────────────────────────────────────────────────────────────────
-RUN mkdir -p /opt/steamcmd && \
-    curl -sSL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" \
-        | tar -xzf - -C /opt/steamcmd && \
-    ln -s /opt/steamcmd/steamcmd.sh /usr/local/bin/steamcmd
 
 # ── Proton-GE ─────────────────────────────────────────────────────────────────
 # GloriousEggroll's Proton fork ships patched Wine builds with superior UE5
@@ -72,7 +78,7 @@ RUN groupadd -g "${PGID}" steam 2>/dev/null || true && \
 # /ark/server       — ASA binaries, config, and saves (bind-mounted volume)
 # /ark/proton-prefix — Wine prefix created at first run (persisted in volume)
 RUN mkdir -p /ark/server /ark/proton-prefix && \
-    chown -R steam:steam /ark /opt/steamcmd
+    chown -R steam:steam /ark
 
 # ── Scripts ───────────────────────────────────────────────────────────────────
 COPY --chown=steam:steam scripts/ /opt/asa-scripts/
