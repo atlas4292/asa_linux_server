@@ -26,11 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # 32/64-bit C runtime (SteamCMD requirement)
         lib32gcc-s1 \
         lib32stdc++6 \
-        # ── Xvfb: in-memory virtual framebuffer ──────────────────────────────
-        # Wine/Proton must connect to a display handle during Wine-prefix
-        # initialisation even when the game renders nothing (-nullrhi).
-        # Xvfb satisfies that requirement with zero physical GPU usage.
-        xvfb \
         # Audio stubs — prevents Wine crashing on no-sound hosts
         libasound2 \
         libasound2:i386 \

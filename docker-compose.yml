@@ -10,6 +10,11 @@ services:
     container_name: asa-server
     restart: unless-stopped
 
+    # game.env supplies gameplay multipliers/rules; start.sh writes them into
+    # GameUserSettings.ini and Game.ini on every startup.
+    env_file:
+      - game.env
+
     environment:
       # ── Server identity ───────────────────────────────────────────────────
       SESSION_NAME:    ${SESSION_NAME:-My ASA Server}

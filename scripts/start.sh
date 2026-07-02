@@ -4,11 +4,11 @@
 # Runs headlessly on Linux via Proton-GE (Wine-based compatibility layer).
 #
 # Flow:
-#   1. Start Xvfb virtual framebuffer (Wine needs a display handle to init,
-#      even though -nullrhi prevents any actual rendering by the game engine)
+#   1. Set headless Wine environment (Wine 6+ null display driver, no Xvfb)
 #   2. SteamCMD: download / validate ASA server files (Windows app, forced)
-#   3. Initialise Proton Wine-prefix on first run
-#   4. Build the launch command and exec the server
+#   3. Generate GameUserSettings.ini and Game.ini from game.env variables
+#   4. Initialise Proton Wine-prefix on first run
+#   5. Build the launch command and exec the server
 # =============================================================================
 set -euo pipefail
 
@@ -40,28 +40,97 @@ PROTON="${PROTON_HOME}/proton"
 SERVER_EXE="${SERVER_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
 ASA_APP_ID="2430930"   # ASA Dedicated Server on Steam (Windows-only app)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 — Virtual framebuffer
-# Wine/Proton initialises an invisible window manager session as part of its
-# startup sequence.  This requires a live X display socket.  Xvfb provides an
-# entirely in-memory virtual screen with no GPU or physical display required.
-# The game server itself renders nothing because we pass -nullrhi below.
-# ─────────────────────────────────────────────────────────────────────────────
-XVFB_DISPLAY=":99"
-info "Starting virtual framebuffer on display ${XVFB_DISPLAY}..."
-Xvfb "${XVFB_DISPLAY}" -screen 0 320x240x8 -nolisten tcp -nolisten unix &
-XVFB_PID=$!
-export DISPLAY="${XVFB_DISPLAY}"
+# ── INI file generator ───────────────────────────────────────────────────────
+# Reads game.env variables (injected by Docker via env_file) and writes them
+# into the ASA config directory on every startup.  game.env is the single
+# source of truth — manual ini edits will be overwritten on next restart.
+write_ini_files() {
+    local cfg="${SERVER_DIR}/ShooterGame/Saved/Config/WindowsServer"
+    mkdir -p "${cfg}"
+    # ASA ini booleans must be Title Case
+    ini_bool() { [[ "${1,,}" == "true" ]] && echo "True" || echo "False"; }
 
-# Wait up to 10 s for Xvfb to become ready
-for i in $(seq 1 10); do
-    if kill -0 "${XVFB_PID}" 2>/dev/null; then
-        break
-    fi
-    sleep 1
-done
-kill -0 "${XVFB_PID}" 2>/dev/null || die "Xvfb failed to start."
-info "Xvfb running (PID ${XVFB_PID})."
+    info "Writing GameUserSettings.ini from game.env..."
+    {
+        echo "[ServerSettings]"
+        # XP & Leveling
+        echo "XPMultiplier=${XP_MULTIPLIER:-1.0}"
+        echo "KillXPMultiplier=${KILL_XP_MULTIPLIER:-1.0}"
+        echo "HarvestXPMultiplier=${HARVEST_XP_MULTIPLIER:-1.0}"
+        echo "CraftXPMultiplier=${CRAFT_XP_MULTIPLIER:-1.0}"
+        # Gathering
+        echo "HarvestAmountMultiplier=${HARVEST_AMOUNT:-1.0}"
+        echo "ResourcesRespawnPeriodMultiplier=${RESOURCE_RESPAWN_PERIOD:-1.0}"
+        echo "GlobalSpoilingTimeMultiplier=${GLOBAL_SPOILING_TIME:-1.0}"
+        echo "GlobalItemDecompositionTimeMultiplier=${GLOBAL_ITEM_DECOMP:-1.0}"
+        echo "GlobalCorpseDecompositionTimeMultiplier=${GLOBAL_CORPSE_DECOMP:-1.0}"
+        # Taming & Breeding
+        echo "TamingSpeedMultiplier=${TAMING_SPEED:-1.0}"
+        echo "LayEggIntervalMultiplier=${LAY_EGG_INTERVAL:-1.0}"
+        echo "MatingIntervalMultiplier=${MATING_INTERVAL:-1.0}"
+        echo "EggHatchSpeedMultiplier=${EGG_HATCH_SPEED:-1.0}"
+        echo "BabyMatureSpeedMultiplier=${BABY_MATURE_SPEED:-1.0}"
+        echo "BabyFoodConsumptionSpeedMultiplier=${BABY_FOOD_CONSUMPTION:-1.0}"
+        # Player
+        echo "PlayerDamageMultiplier=${PLAYER_DAMAGE:-1.0}"
+        echo "PlayerResistanceMultiplier=${PLAYER_RESISTANCE:-1.0}"
+        echo "PlayerCharacterHealthRecoveryMultiplier=${PLAYER_HEALTH_RECOVERY:-1.0}"
+        echo "PlayerCharacterStaminaDrainMultiplier=${PLAYER_STAMINA_DRAIN:-1.0}"
+        echo "PlayerCharacterFoodDrainMultiplier=${PLAYER_FOOD_DRAIN:-1.0}"
+        echo "PlayerCharacterWaterDrainMultiplier=${PLAYER_WATER_DRAIN:-1.0}"
+        # Dino
+        echo "DinoHarvestingDamageMultiplier=${DINO_DAMAGE:-1.0}"
+        echo "DinoResistanceMultiplier=${DINO_RESISTANCE:-1.0}"
+        echo "DinoCharacterHealthRecoveryMultiplier=${DINO_HEALTH_RECOVERY:-1.0}"
+        echo "DinoCharacterStaminaDrainMultiplier=${DINO_STAMINA_DRAIN:-1.0}"
+        echo "DinoCharacterFoodDrainMultiplier=${DINO_FOOD_DRAIN:-1.0}"
+        # World
+        echo "CropGrowthSpeedMultiplier=${CROP_GROWTH_SPEED:-1.0}"
+        echo "CropDecaySpeedMultiplier=${CROP_DECAY_SPEED:-1.0}"
+        echo "FuelConsumptionIntervalMultiplier=${FUEL_CONSUMPTION:-1.0}"
+        # Server rules
+        echo "AllowThirdPersonPlayer=$(ini_bool "${ALLOW_THIRD_PERSON:-true}")"
+        echo "AllowFlyerCarryPvE=$(ini_bool "${ALLOW_FLYER_CARRY_PVE:-false}")"
+        echo "DisableDinoDecayPvE=$(ini_bool "${DISABLE_DINO_DECAY_PVE:-false}")"
+        echo "AllowCaveBuildingPvE=$(ini_bool "${ALLOW_CAVE_BUILDING_PVE:-false}")"
+        echo "AlwaysAllowStructurePickup=$(ini_bool "${ALWAYS_ALLOW_STRUCTURE_PICKUP:-true}")"
+        echo "StructurePickupHoldDuration=${STRUCTURE_PICKUP_HOLD_DURATION:-0.5}"
+        echo "AdminLogging=$(ini_bool "${ADMIN_LOGGING:-false}")"
+        echo "ShowFloatingDamageText=$(ini_bool "${SHOW_DAMAGE_TEXT:-true}")"
+        echo "AllowHitMarkers=$(ini_bool "${ALLOW_HIT_MARKERS:-true}")"
+        echo "IdlePlayerKickInterval=${IDLE_KICK_INTERVAL:-0}"
+        echo "MaxTribeLogEntries=${MAX_TRIBE_LOG_ENTRIES:-100}"
+        echo "MaxNumberOfPlayersInTribe=${MAX_PLAYERS_IN_TRIBE:-0}"
+        [[ -n "${ACTIVE_EVENT:-}" ]] && echo "ActiveEvent=${ACTIVE_EVENT}"
+        echo ""
+        echo "[MessageOfTheDay]"
+        echo "Message=${MOTD_MESSAGE:-Welcome to the server!}"
+        echo "Duration=${MOTD_DURATION:-20}"
+    } > "${cfg}/GameUserSettings.ini"
+
+    info "Writing Game.ini from game.env..."
+    {
+        echo "[/Script/ShooterGame.ShooterGameMode]"
+        echo "OverrideOfficialDifficulty=${OVERRIDE_OFFICIAL_DIFFICULTY:-5.0}"
+        echo "DifficultyOffset=${DIFFICULTY_OFFSET:-1.0}"
+        echo "SupplyCrateLootQualityMultiplier=${SUPPLY_LOOT_QUALITY:-1.0}"
+        echo "FishingLootQualityMultiplier=${FISHING_LOOT_QUALITY:-1.0}"
+    } > "${cfg}/Game.ini"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 1 — Headless Wine / Proton environment
+# Wine 6+ ships a built-in null display driver that activates automatically
+# when DISPLAY is unset — no Xvfb needed.  ASA also passes -nullrhi so the
+# game engine never attempts to initialise any rendering pipeline.
+#
+# Fallback: if the server exits with X11/display errors, install xvfb in the
+# Dockerfile and add the following before this block:
+#   Xvfb :99 -screen 0 320x240x8 -nolisten tcp &; export DISPLAY=:99
+# ─────────────────────────────────────────────────────────────────────────────
+unset DISPLAY
+export SDL_VIDEODRIVER="dummy"   # SDL headless dummy driver
+export SDL_AUDIODRIVER="dummy"   # SDL headless audio stub
 
 # ── Graceful shutdown handler ─────────────────────────────────────────────────
 SERVER_PID=""
@@ -72,7 +141,6 @@ cleanup() {
         kill -TERM "${SERVER_PID}" 2>/dev/null || true
         wait "${SERVER_PID}" 2>/dev/null || true
     fi
-    kill "${XVFB_PID}" 2>/dev/null || true
     info "Shutdown complete."
 }
 trap cleanup EXIT INT TERM HUP
@@ -102,7 +170,12 @@ fi
     die "Server executable not found at:\n  ${SERVER_EXE}\nSet AUTO_UPDATE=true and restart to download the server files."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 3 — Proton / Wine-prefix initialisation
+# STEP 3 — Generate ini files from game.env
+# ─────────────────────────────────────────────────────────────────────────────
+write_ini_files
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 4 — Proton / Wine-prefix initialisation
 # The prefix is a Wine 'C: drive' emulation directory.  It only needs to be
 # created once; subsequent starts reuse the existing prefix.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,7 +189,7 @@ if [[ ! -d "${PROTON_PREFIX}/pfx" ]]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4 — Build launch parameters and start the server
+# STEP 5 — Build launch parameters and start the server
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── URL-style query parameters (first positional argument to the exe) ─────────

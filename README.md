@@ -49,15 +49,13 @@ All options live in `.env`. Key ones:
 
 `TheIsland_WP` · `ScorchedEarth_WP` · `Aberration_WP` · `TheCenter_WP` · `Extinction_WP` · `Genesis_WP` · `Genesis2_WP`
 
-### Advanced Config (ini files)
+### Game Settings (`game.env`)
 
-Game and server settings can be tuned via ini files inside the volume:
+Multipliers, server rules, difficulty, and other in-game settings are controlled via `game.env`. The container writes `GameUserSettings.ini` and `Game.ini` from these values on every startup — edit the file and `docker compose restart` to apply changes.
 
-```
-ark_server/ShooterGame/Saved/Config/WindowsServer/
-├── GameUserSettings.ini
-└── Game.ini
-```
+Key groups in `game.env`: XP & Leveling · Gathering · Taming & Breeding · Player/Dino modifiers · Server Rules · Difficulty · Loot Quality · Message of the Day
+
+> **Note:** Because ini files are regenerated on every start, manual edits inside the volume will be overwritten. `game.env` is the single source of truth.
 
 ---
 
@@ -67,8 +65,10 @@ ark_server/ShooterGame/Saved/Config/WindowsServer/
 |-----------|-----|
 | **SteamCMD** `+@sSteamCmdForcePlatformType windows` | Downloads the Windows-only ASA depot on a Linux host |
 | **Proton-GE** | Wine fork with UE5/DX12 patches (DXVK, vkd3d-proton, esync/fsync) |
-| **Xvfb** | Wine needs a display socket to initialise internally; Xvfb provides a tiny in-memory virtual screen (no GPU, no physical display) |
+| **Wine null display driver** | Wine 6+ activates a built-in null display driver when `DISPLAY` is unset — no Xvfb or physical screen needed. `SDL_VIDEODRIVER=dummy` covers SDL-based Wine components. |
 | **`-nullrhi -nosound -nographics`** | Tells UE5 to skip all rendering, audio, and graphics subsystems — server is pure game logic |
+
+> **Fallback:** if a future Proton-GE version regresses on the null driver and the server exits with X11 errors, install `xvfb` in the Dockerfile and add `Xvfb :99 -screen 0 320x240x8 -nolisten tcp & export DISPLAY=:99` at the top of `scripts/start.sh`.
 
 ---
 
