@@ -1,0 +1,90 @@
+services:
+  asa:
+    build:
+      context: .
+      args:
+        PROTON_VERSION: ${PROTON_VERSION:-GE-Proton9-20}
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
+    image: asa-server:latest
+    container_name: asa-server
+    restart: unless-stopped
+
+    environment:
+      # ── Server identity ───────────────────────────────────────────────────
+      SESSION_NAME:    ${SESSION_NAME:-My ASA Server}
+      SERVER_PASSWORD: ${SERVER_PASSWORD:-}
+      ADMIN_PASSWORD:  ${ADMIN_PASSWORD:-changeme_now}
+
+      # ── Map selection ────────────────────────────────────────────────────
+      # Available maps (append _WP to each):
+      #   TheIsland  |  ScorchedEarth  |  Aberration
+      #   TheCenter  |  Extinction     |  Genesis       |  Genesis2
+      MAP: ${MAP:-TheIsland_WP}
+
+      # ── Capacity ────────────────────────────────────────────────────────
+      MAX_PLAYERS: ${MAX_PLAYERS:-70}
+
+      # ── Network ports ────────────────────────────────────────────────────
+      GAME_PORT:    ${GAME_PORT:-7777}
+      QUERY_PORT:   ${QUERY_PORT:-27015}
+      RCON_PORT:    ${RCON_PORT:-27020}
+      RCON_ENABLED: ${RCON_ENABLED:-True}
+
+      # ── Anti-cheat ───────────────────────────────────────────────────────
+      # BattlEye is not supported under Wine — keep this true
+      DISABLE_BATTLEYE: ${DISABLE_BATTLEYE:-true}
+
+      # ── Update behaviour ─────────────────────────────────────────────────
+      # When true, SteamCMD validates/updates the server on every startup.
+      # Set to false after the initial download to skip the update check
+      # and reduce startup time.
+      AUTO_UPDATE: ${AUTO_UPDATE:-true}
+
+      # ── Extra launch flags ───────────────────────────────────────────────
+      # Appended verbatim after the standard flags, e.g.:
+      #   EXTRA_FLAGS=-ClusterDirOverride=/ark/cluster -clusterid=mycluster
+      EXTRA_FLAGS: ${EXTRA_FLAGS:-}
+
+    ports:
+      # Host:Container — all UDP except RCON
+      - "${GAME_PORT:-7777}:${GAME_PORT:-7777}/udp"
+      - "${QUERY_PORT:-27015}:${QUERY_PORT:-27015}/udp"
+      - "${RCON_PORT:-27020}:${RCON_PORT:-27020}/tcp"
+
+    volumes:
+      # All server binaries, config files, and world saves.
+      # First-time download is 30-40 GB; subsequent starts are fast.
+      - ark_server:/ark/server
+
+      # Proton Wine prefix — persisted so it is only created once.
+      - ark_proton_prefix:/ark/proton-prefix
+
+    # ── Resource tuning ──────────────────────────────────────────────────────
+    # UE5 is heavily mmap-intensive; shared memory below 2 GB will crash.
+    shm_size: "4gb"
+
+    # ASA opens many file handles (logs, chunk files, socket connections).
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+
+    # Allow up to 2 minutes for the server to flush saves on graceful stop.
+    stop_grace_period: 2m
+
+    # ── Health check ─────────────────────────────────────────────────────────
+    # Confirms the server process is alive. start_period covers the full
+    # Steam update + UE5 world-load time on first run.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'ArkAscendedServer.exe' > /dev/null || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 600s   # 10 min: covers initial SteamCMD download + load
+
+volumes:
+  ark_server:
+    driver: local
+  ark_proton_prefix:
+    driver: local
